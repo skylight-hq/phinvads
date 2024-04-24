@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+dibbs/__init__.py
+dibbs/base_service.py
+dibbs/utils.py
+dibbs.egg-info/PKG-INFO
+dibbs.egg-info/SOURCES.txt
+dibbs.egg-info/dependency_links.txt
+dibbs.egg-info/requires.txt
+dibbs.egg-info/top_level.txt
+tests/test_base_service.py

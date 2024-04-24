@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: dibbs
+Version: 0.1.0
+Summary: A small library of tools shared across the DIBBS project
+Requires-Dist: pydantic==1.10.9
+Requires-Dist: fastapi>=0.109.1
+Requires-Dist: uvicorn
