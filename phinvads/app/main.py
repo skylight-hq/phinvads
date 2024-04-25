@@ -1,6 +1,7 @@
 import traceback
 from dibbs.base_service import BaseService
 from pathlib import Path
+from pydantic import BaseModel, Field
 from pyhessian.client import HessianProxy
 
 # Instantiate FastAPI via DIBBs' BaseService class
@@ -17,26 +18,117 @@ url = "https://phinvads.cdc.gov/vocabService/v2"
 service = HessianProxy(url)
 
 
-# Get all value sets
-@app.get("/value-sets")
-async def get_value_sets():
-    response = service.getAllValueSets()
-
-    # Iterate trhough the value sets and convert them to a dictionary
-    value_sets = []
-    for value_set in response.valueSet:
-        value_sets.append(value_set.__dict__)
-
-    return {"valueSets": value_sets}
+##### Domain Objects #####
 
 
-# Get a value set by OID
-@app.get("/value-sets/{value_set_oid}")
-async def get_value_set(value_set_oid: str):
-    response = service.getValueSetByOid(value_set_oid)
-    value_set = response.__dict__.get("valueSet")[0]
+# Authority
+# Represents an assigning authority for a code system
+# | **Data Type**| **Data Name**| **Data Description**|
+# | --- | --- | --- |
+# | String | id | The GUID identifier for this Authority object. |
+# | String | name | The name of the authority that develops and maintains the code system or value set. |
+# | String | description | The description of the authority that develops and maintains the coding system or value set. |
+# | String | url | Web URL for the Authority. |
+# | String | contactInformation | Contact information for the person or organization that can be contacted to provide more information on the coding system or value set. |
+class Authority(BaseModel):
+    id: str = Field(description="The GUID identifier for this Authority object.")
+    name: str = Field(
+        description="The name of the authority that develops and maintains the code system or value set."
+    )
+    description: str = Field(
+        description="The description of the authority that develops and maintains the coding system or value set."
+    )
+    url: str = Field(description="Web URL for the Authority.")
+    contactInformation: str = Field(
+        description="Contact information for the person or organization that can be contacted to provide more information on the coding system or value set."
+    )
 
-    return {"valueSet": value_set}
+
+# Code System
+# Represents a vocabulary code system
+# | **Data Type**| **Data Name**| **Data Description**|
+# | --- | --- | --- |
+# | String | oid | The OID that identifies this Code System object. |
+# | String | id | The GUID identifier for this Code System object. |
+# | String | name | The name of the Code System. |
+# | String | definitionText | A statement of the meaning or purpose of the Code System. |
+# | String | status | Text that specifies the current state of this Code System. Valid values are [Un-Published, Published, Retired]. |
+# | Date | statusDate | The date that the status was changed or updated. |
+# | String | version | The version number of this Code System |
+# | String | versionDescription | The description of this version of the Code System. |
+# | Date | acquiredDate | The date that this Code System was acquired |
+# | Date | effectiveDate | The date that this Code System became effective. |
+# | Date | expiryDate | The date that this Code System expired. |
+# | String | assigningAuthorityVersionName | The version of the coding system according to the assigning authority. |
+# | Date | assigningAuthorityReleaseDate | The date the coding system was released for use by the assigning authority. |
+# | String | distributionSourceVersionName | Version of the coding system according to the distribution source. |
+# | Date | distributionSourceReleaseDate | Date the coding system was released for use by the source. |
+# | String | distributionSourceId | The GUID identifier that represents a Source domain object that corresponds to this Code System. |
+# | Date | sdoCreateDate | Date the code system is Created by the SDO. |
+# | Date | lastRevisionDate | Date the code system is last revised by the SDO. |
+# | Date | sdoReleaseDate | The date that this Code System was released for use. |
+# | String | assigningAuthorityId | The GUID identifier that represents an Authority domain object that corresponds to this Code System. |
+# | String | codeSystemCode | An unique code which identifies the CodeSystem for use in specific data exchange context. |
+# | String | sourceUrl | URL of the distribution source where the coding system can be retrieved. |
+# | String | hl70396Identifier | An HL7 unique identifier for this Code System. |
+class CodeSystem(BaseModel):
+    oid: str = Field(description="The OID that identifies this Code System object.")
+    id: str = Field(description="The GUID identifier for this Code System object.")
+    name: str = Field(description="The name of the Code System.")
+    definitionText: str = Field(
+        description="A statement of the meaning or purpose of the Code System."
+    )
+    status: str = Field(
+        description="Text that specifies the current state of this Code System. Valid values are [Un-Published, Published, Retired]."
+    )
+    statusDate: str = Field(
+        description="The date that the status was changed or updated."
+    )
+    version: str = Field(description="The version number of this Code System")
+    versionDescription: str = Field(
+        description="The description of this version of the Code System."
+    )
+    acquiredDate: str = Field(description="The date that this Code System was acquired")
+    effectiveDate: str = Field(
+        description="The date that this Code System became effective."
+    )
+    expiryDate: str = Field(description="The date that this Code System expired.")
+    assigningAuthorityVersionName: str = Field(
+        description="The version of the coding system according to the assigning authority."
+    )
+    assigningAuthorityReleaseDate: str = Field(
+        description="The date the coding system was released for use by the assigning authority."
+    )
+    distributionSourceVersionName: str = Field(
+        description="Version of the coding system according to the distribution source."
+    )
+    distributionSourceReleaseDate: str = Field(
+        description="Date the coding system was released for use by the source."
+    )
+    distributionSourceId: str = Field(
+        description="The GUID identifier that represents a Source domain object that corresponds to this Code System."
+    )
+    sdoCreateDate: str = Field(
+        description="Date the code system is Created by the SDO."
+    )
+    lastRevisionDate: str = Field(
+        description="Date the code system is last revised by the SDO."
+    )
+    sdoReleaseDate: str = Field(
+        description="The date that this Code System was released for use."
+    )
+    assigningAuthorityId: str = Field(
+        description="The GUID identifier that represents an Authority domain object that corresponds to this Code System."
+    )
+    codeSystemCode: str = Field(
+        description="An unique code which identifies the CodeSystem for use in specific data exchange context."
+    )
+    sourceUrl: str = Field(
+        description="URL of the distribution source where the coding system can be retrieved."
+    )
+    hl70396Identifier: str = Field(
+        description="An HL7 unique identifier for this Code System."
+    )
 
 
 ##### Bulk Retrieval Methods #####
@@ -172,3 +264,15 @@ async def get_relationship_types():
         relationship_types.append(relationship_type.__dict__)
 
     return {"relationshipTypes": relationship_types}
+
+
+##### Single Retrieval Methods #####
+
+
+# Get a value set by OID
+@app.get("/value-sets/{value_set_oid}")
+async def get_value_set(value_set_oid: str):
+    response = service.getValueSetByOid(value_set_oid)
+    value_set = response.__dict__.get("valueSet")[0]
+
+    return {"valueSet": value_set}
