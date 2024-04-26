@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - ./phinvads:/code
+      - ./src:/code
     ports:
       - 8080:8080
     restart: on-failure
