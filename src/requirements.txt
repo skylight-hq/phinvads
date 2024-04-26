@@ -1,2 +1,2 @@
-./python-hessian
 fastapi
+six

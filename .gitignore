@@ -30,3 +30,6 @@ ENV/
 *.tmp
 *.tmp.*
 *~
+
+node_modules/
+.wrangler/

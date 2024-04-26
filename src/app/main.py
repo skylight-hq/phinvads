@@ -7,7 +7,18 @@ from pyhessian.client import HessianProxy
 async def on_fetch(request, env):
     import asgi
 
-    return await asgi.fetch(app, request, env)
+    response = await asgi.fetch(app, request, env)
+
+    # Follow redirects including 307 and 308
+    # if response.status in [301, 302, 307, 308]:
+    #     print(response.toString())
+    #     location = response.headers.get("Location")
+    #     print("Redirecting to: ", location)
+    #     if location:
+    #         request.url = location
+    #         return await on_fetch(request, env)
+
+    return response
 
 
 # Instantiate FastAPI
