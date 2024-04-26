@@ -2,13 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /code
 
-COPY ./src/requirements.txt /code/requirements.txt
+COPY requirements.txt /code/requirements.txt
 RUN pip install -r requirements.txt
-RUN pip install uvicorn
 
-COPY ./src/app /code/app
-
-WORKDIR /code/app
+COPY ./src /code
 
 EXPOSE 8080
 CMD uvicorn main:app --host 0.0.0.0 --port 8080 --reload
