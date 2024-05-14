@@ -445,17 +445,17 @@ async def find_value_set_ids(
 @app.post("/find-value-sets")
 async def find_value_sets(
     input: ValueSetSearchCriteria,
-    page_number: int = 0,
+    page_number: int = 1,
     page_size: int = 10,
 ):
     response = service.findValueSets(input.model_dump(), page_number, page_size)
 
     # Iterate through the value sets and convert them to a dictionary
-    value_sets = []
-    for value_set in response.valueSet:
-        value_sets.append(value_set.__dict__)
+    # value_sets = []
+    # for value_set in response.valueSet:
+    #     value_sets.append(value_set.__dict__)
 
-    return {"valueSets": value_sets}
+    return {"valueSets": response}
 
 
 ##### Single Retrieval Methods #####
@@ -468,3 +468,21 @@ async def get_value_set(value_set_oid: str):
     value_set = response.__dict__.get("valueSet")[0]
 
     return {"valueSet": value_set}
+
+
+# Get a code system by OID
+@app.get("/code-systems/{code_system_oid}")
+async def get_code_system(code_system_oid: str):
+    response = service.getCodeSystemByOid(code_system_oid)
+    code_system = response.__dict__.get("codeSystems")[0]
+
+    return {"codeSystem": code_system}
+
+
+# Get a view by ID
+@app.get("/views/{view_id}")
+async def get_view(view_id: str):
+    response = service.getViewById(view_id)
+    view = response.__dict__.get("views")[0]
+
+    return {"view": view}
