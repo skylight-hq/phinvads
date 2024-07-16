@@ -65,15 +65,24 @@ def join_values(values):
     )
 
 
+def insert_into_table_from_dict(table_name, record_dict, cur):
+    columns = ", ".join(record_dict.keys())
+    values = join_values(record_dict.values())
+    insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES ({});").format(
+        sql.Identifier(table_name), sql.SQL(columns), sql.SQL(values)
+    )
+    cur.execute(insert_sql)
+
+
 def insert_records(table_name, records, cur):
     for record in records:
         record_dict = record.__dict__
-        columns = ", ".join(record_dict.keys())
-        values = join_values(record_dict.values())
-        insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES ({});").format(
-            sql.Identifier(table_name), sql.SQL(columns), sql.SQL(values)
-        )
-        cur.execute(insert_sql)
+        insert_into_table_from_dict(table_name, record_dict, cur)
+
+
+###############################
+## BUSINESS LOGIC
+###############################
 
 
 def request_without_timeout(timeout, method, *args):
@@ -98,11 +107,6 @@ def request_without_timeout(timeout, method, *args):
             time.sleep(timeout)
 
 
-###############################
-## BUSINESS LOGIC
-###############################
-
-
 def load_entities(schema, cur):
     table_name = schema["table_name"]
     response = schema["service_method"]()
@@ -110,7 +114,7 @@ def load_entities(schema, cur):
     example_entity = entities[0].__dict__
     create_table_from_dict(table_name, example_entity, cur)
     insert_records(table_name, entities, cur)
-    return [entity[schema["id_key"]] for entity in entities]
+    return [getattr(entity, schema["id_key"]) for entity in entities]
 
 
 def load_concepts(
@@ -132,6 +136,7 @@ def load_concepts(
     # Load concepts
     page_size = 10000
     for linked_table_id in linked_table_ids:
+        # Check if concepts already exist
         cur.execute(
             f"SELECT COUNT(*) FROM {table_name} WHERE {linked_table_id_name} = %s",
             (linked_table_id,),
@@ -139,17 +144,20 @@ def load_concepts(
         count = cur.fetchone()[0]
         if count > 0:
             response = service_method(linked_table_id, 1, 1)
+            # If all concepts are already loaded, skip
             if count == response.totalResults:
                 print(
                     f"Concepts for {linked_table_id_name} {linked_table_id} already exist"
                 )
                 continue
+            # If not all concepts are loaded, delete existing concepts
             cur.execute(
                 f"DELETE FROM {table_name} WHERE {linked_table_id_name} = %s",
                 (linked_table_id,),
             )
             conn.commit()
 
+        # Load concepts
         page_number = 1
         response = request_without_timeout(
             30, service_method, linked_table_id, page_number, page_size
@@ -248,6 +256,30 @@ object_schema = {
         "response_attribute": "valueSetConcepts",
         "id_key": "valuesetversionid",
     },
+    "view": {
+        "table_name": "view",
+        "service_method": service.getAllViews,
+        "response_attribute": "views",
+        "id_key": "id",
+    },
+    "view_version": {
+        "table_name": "view_version",
+        "service_method": service.getAllViewVersions,
+        "response_attribute": "viewVersions",
+        "id_key": "id",
+    },
+    "view_value_set_version": {
+        "table_name": "view_value_set_version",
+        "service_method": service.getValueSetVersionsByViewVersionId,
+        "response_attribute": "valueSetVersions",
+        "id_key": "viewversionid",
+    },
+    "value_set_group": {
+        "table_name": "value_set_group",
+        "service_method": service.getAllGroups,
+        "response_attribute": "groups",
+        "id_key": "id",
+    },
 }
 
 # Load code systems and code system concepts
@@ -274,6 +306,38 @@ check_concept_count(
     object_schema["value_set_concept"],
     cur,
 )
+
+# Load views and view versions
+view_ids = load_entities(object_schema["view"], cur)
+view_version_ids = load_entities(object_schema["view_version"], cur)
+
+# Create join table for view versions and value set versions
+example_join_dict = {
+    "viewversionid": "1",
+    "valuesetversionid": "1",
+}
+create_table_from_dict("view_value_set_version", example_join_dict, cur)
+# Add primary key to join table
+cur.execute(
+    "ALTER TABLE view_value_set_version ADD PRIMARY KEY (viewversionid, valuesetversionid);"
+)
+
+# Insert data into join table
+for id in view_version_ids:
+    response = service.getValueSetVersionsByViewVersionId(id)
+    value_set_versions = response.valueSetVersions
+    value_set_version_ids = [
+        value_set_version.id for value_set_version in value_set_versions
+    ]
+    for value_set_version_id in value_set_version_ids:
+        insert_dict = {
+            "viewversionid": id,
+            "valuesetversionid": value_set_version_id,
+        }
+        insert_into_table_from_dict("view_value_set_version", insert_dict, cur)
+
+# Load groups
+load_entities(object_schema["value_set_group"], cur)
 
 # Close DB connection
 conn.commit()
