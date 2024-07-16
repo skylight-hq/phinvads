@@ -8,19 +8,13 @@ from psycopg2 import sql
 
 from pyhessian.client import HessianProxy
 
-# URL of the PHIN VADS Hessian service
-url = "https://phinvads.cdc.gov/vocabService/v2"
-service = HessianProxy(url)
+###############################
+## DATABASE HELPERS
+###############################
 
 
-# Function to infer SQL data types from Python types
 def infer_sql_type(key, value):
-    if (
-        isinstance(value, bool)
-        or value == "True"
-        or value == "False"
-        or key.endswith("Flag")
-    ):
+    if isinstance(value, bool) or value in ["True", "False"] or key.endswith("Flag"):
         return "BOOLEAN"
     elif isinstance(value, int):
         return "INTEGER"
@@ -29,7 +23,6 @@ def infer_sql_type(key, value):
     elif isinstance(value, datetime):
         return "TIMESTAMP"
     elif isinstance(value, str):
-        # Handle datetime strings separately if needed
         try:
             datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
             return "TIMESTAMP"
@@ -42,210 +35,247 @@ def infer_sql_type(key, value):
         return "TEXT"
 
 
-# Function to generate the SQL create table statement
 def generate_create_table_sql(table_name, example_dict):
-    columns = []
-    for key, value in example_dict.items():
-        column_type = infer_sql_type(key, value)
-        columns.append(f"{key} {column_type}")
-
+    columns = [
+        f"{key} {infer_sql_type(key, value)}" for key, value in example_dict.items()
+    ]
     columns_sql = ", ".join(columns)
-    create_table_sql = f"CREATE TABLE IF NOT EXISTS {
-        table_name} ({columns_sql});"
-    return create_table_sql
+    return f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_sql});"
 
 
-def request_without_timeout(timeout, method, *args):
-    while True:
-        try:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(method, *args)
-                response = future.result(timeout=timeout)
-                return response
-        except concurrent.futures.TimeoutError:
-            print("The request timed out")
-            time.sleep(timeout)
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            time.sleep(timeout)
-
-
-# Join values, replacing None with NULL and escaping strings with single or double quotes
+def create_table_from_dict(name: str, example_dict: dict, cur):
+    create_table_sql = generate_create_table_sql(name, example_dict)
+    cur.execute(create_table_sql)
 
 
 def join_values(values):
     return ", ".join(
         [
             (
-                f"NULL"
+                "NULL"
                 if value is None
-                else (
-                    f"'{str(value).replace("'", "''")}'"
-                    if isinstance(value, str)
-                    else (
-                        f"'{str(value)}'" if isinstance(value, datetime) else str(value)
-                    )
-                )
+                else f"'{str(value).replace("'", "''")}'"
+                if isinstance(value, str)
+                else f"'{str(value)}'"
+                if isinstance(value, datetime)
+                else str(value)
             )
             for value in values
         ]
     )
 
 
-def load_code_systems():
-    # Get all code systems
-    response = service.getAllCodeSystems()
-    code_systems = response.codeSystems
-
-    # Create a table for code systems
-    code_system_example = code_systems[0].__dict__
-    create_table_sql = generate_create_table_sql("code_system", code_system_example)
-    print(create_table_sql)
-    cur.execute(create_table_sql)
-
-    # Drop all rows from the table
-    cur.execute("DELETE FROM code_system;")
-
-    # Insert code systems into the table
-    for code_system in code_systems:
-        code_system_dict = code_system.__dict__
-        columns = code_system_dict.keys()
-        values = code_system_dict.values()
-        # Join column names and values with commas
-        columns = ", ".join(columns)
-        values = join_values(values)
-        insert_sql = sql.SQL("INSERT INTO code_system ({}) VALUES ({});").format(
-            sql.SQL(columns), sql.SQL(values)
+def insert_records(table_name, records, cur):
+    for record in records:
+        record_dict = record.__dict__
+        columns = ", ".join(record_dict.keys())
+        values = join_values(record_dict.values())
+        insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES ({});").format(
+            sql.Identifier(table_name), sql.SQL(columns), sql.SQL(values)
         )
         cur.execute(insert_sql)
 
 
-def load_code_system_concepts():
-    # Get all code systems
-    # response = service.getAllCodeSystems()
-    code_system_oids = [
-        # "2.16.840.1.114222.4.5.331",
-        # "2.16.840.1.113883.12.206",
-        # "2.16.840.1.113883.6.96",
-        # "2.16.840.1.114222.4.5.332",
-        # "2.16.840.1.113883.3.26.1.5",
-        # "2.16.840.1.113883.3.5.14.4",
-        # "2.16.840.1.113883.6.1",
-        # "2.16.840.1.114222.4.5.232",
-        # "2.16.840.1.113883.5.88",
-        # "2.16.840.1.113883.6.90",
-        # "2.16.840.1.113883.4.291",
-    ]
-    # Delete rows from code_system_concept table with these code system OIDs
-    delete_sql = sql.SQL(
-        "DELETE FROM code_system_concept WHERE codesystemoid IN ({})"
-    ).format(sql.SQL(", ").join(map(sql.Literal, code_system_oids)))
-    cur.execute(delete_sql)
-    table_created = True
-    page_number = 1
+def request_without_timeout(timeout, method, *args):
+    while True:
+        tries = 0
+        print(f"Requesting with args {args}")
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                tries += 1
+                if tries > 1:
+                    print(f"Attempt {tries}...")
+                future = executor.submit(method, *args)
+                response = future.result(timeout=timeout)
+                return response
+        except concurrent.futures.TimeoutError:
+            print(
+                f"Request timed out after {timeout} seconds, retrying in {timeout} seconds"
+            )
+            time.sleep(timeout)
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            time.sleep(timeout)
+
+
+###############################
+## BUSINESS LOGIC
+###############################
+
+
+def load_entities(schema, cur):
+    table_name = schema["table_name"]
+    response = schema["service_method"]()
+    entities = getattr(response, schema["response_attribute"])
+    example_entity = entities[0].__dict__
+    create_table_from_dict(table_name, example_entity, cur)
+    insert_records(table_name, entities, cur)
+    return [entity[schema["id_key"]] for entity in entities]
+
+
+def load_concepts(
+    schema,
+    linked_table_ids,
+    cur,
+):
+    # Read schema
+    service_method = schema["service_method"]
+    table_name = schema["table_name"]
+    response_attribute_name = schema["response_attribute"]
+    linked_table_id_name = schema["id_key"]
+
+    # Get example concept and create table
+    response = service_method(linked_table_ids[0], 1, 1)
+    example_concept = getattr(response, response_attribute_name)[0].__dict__
+    create_table_from_dict(table_name, example_concept, cur)
+
+    # Load concepts
     page_size = 10000
-
-    for code_system_oid in code_system_oids:
-        # Get first page of code system concepts
-        response = request_without_timeout(
-            30,
-            service.getCodeSystemConceptsByCodeSystemOid,
-            code_system_oid,
-            page_number,
-            page_size,
+    for linked_table_id in linked_table_ids:
+        cur.execute(
+            f"SELECT COUNT(*) FROM {table_name} WHERE {linked_table_id_name} = %s",
+            (linked_table_id,),
         )
+        count = cur.fetchone()[0]
+        if count > 0:
+            response = service_method(linked_table_id, 1, 1)
+            if count == response.totalResults:
+                print(
+                    f"Concepts for {linked_table_id_name} {linked_table_id} already exist"
+                )
+                continue
+            cur.execute(
+                f"DELETE FROM {table_name} WHERE {linked_table_id_name} = %s",
+                (linked_table_id,),
+            )
+            conn.commit()
 
-        code_system_concepts = response.codeSystemConcepts
-        total_code_system_concepts = response.totalResults
-        print(f"Total code system concepts for code system {
-              code_system_oid}: {total_code_system_concepts}")
-        if response.errorText is not None or len(code_system_concepts) == 0:
+        page_number = 1
+        response = request_without_timeout(
+            30, service_method, linked_table_id, page_number, page_size
+        )
+        concepts = getattr(response, response_attribute_name)
+        total_concepts = response.totalResults
+        print(
+            f"Total concepts for {linked_table_id_name} {linked_table_id}: {total_concepts}"
+        )
+        if response.errorText or not concepts:
             print(f"Error text: {response.errorText}")
             continue
 
-        # Loop through all pages of code system concepts
-        while len(response.codeSystemConcepts) == page_size:
+        while len(getattr(response, response_attribute_name)) == page_size:
             page_number += 1
             response = request_without_timeout(
-                30,
-                service.getCodeSystemConceptsByCodeSystemOid,
-                code_system_oid,
-                page_number,
-                page_size,
+                30, service_method, linked_table_id, page_number, page_size
             )
-            code_system_concepts += response.codeSystemConcepts
-            time.sleep(5)
+            concepts += getattr(response, response_attribute_name)
 
-        # Create a table for code system concepts
-        if not table_created:
-            code_system_concept_example = code_system_concepts[0].__dict__
-            print(code_system_concept_example)
-            create_table_sql = generate_create_table_sql(
-                "code_system_concept", code_system_concept_example
-            )
-            print(create_table_sql)
-            cur.execute(create_table_sql)
-            table_created = True
-            # Drop all rows from the table
-            cur.execute("DELETE FROM code_system_concept;")
-
-        # Insert code system concepts into the table
-        for code_system_concept in code_system_concepts:
-            code_system_concept_dict = code_system_concept.__dict__
-            columns = code_system_concept_dict.keys()
-            values = code_system_concept_dict.values()
-            # Join column names and values with commas
-            columns = ", ".join(columns)
-            values = join_values(values)
-            insert_sql = sql.SQL(
-                "INSERT INTO code_system_concept ({}) VALUES ({});"
-            ).format(sql.SQL(columns), sql.SQL(values))
-            cur.execute(insert_sql)
-
-        print(f"Inserted {len(code_system_concepts)
-                          } code system concepts for code system {code_system_oid}")
+        insert_records(table_name, concepts, cur)
+        print(
+            f"Inserted {len(concepts)} concepts for {linked_table_id_name} {linked_table_id}"
+        )
         conn.commit()
-        time.sleep(5)
 
 
-def check_code_system_concept_count():
-    # Get counts from the database
+def check_concept_count(schema, cur):
+    # Read schema
+    table_name = schema["table_name"]
+    linked_table_id_name = schema["id_key"]
+    service_method = schema["service_method"]
+
+    # Check counts in DB
     cur.execute(
-        "SELECT codesystemoid, COUNT(*) FROM code_system_concept GROUP BY codesystemoid;"
+        f"SELECT {linked_table_id_name}, COUNT(*) FROM {table_name} GROUP BY {linked_table_id_name};"
     )
     counts_in_db = dict(cur.fetchall())
 
-    counts_from_api = {}
+    # Check counts in service and compare
     mismatched_counts = []
-
-    for code_system_oid, count in counts_in_db.items():
-        response = request_without_timeout(
-            15, service.getCodeSystemConceptsByCodeSystemOid, code_system_oid, 1, 1
-        )
+    for linked_table_id, count in counts_in_db.items():
+        response = request_without_timeout(15, service_method, linked_table_id, 1, 1)
         expected_count = response.totalResults
-        counts_from_api[code_system_oid] = expected_count
         if expected_count != count:
-            print("MISMATCH!!!")
             print(
-                f"Expected count for code system {code_system_oid}: {expected_count}, actual count: {count}"
+                f"MISMATCH!!! Expected count for {linked_table_id_name} {linked_table_id}: {expected_count}, actual count: {count}"
             )
-            mismatched_counts.append(code_system_oid)
+            mismatched_counts.append(linked_table_id)
 
-    if len(mismatched_counts) == 0:
+    if not mismatched_counts:
         print("All counts match")
     else:
         print("Mismatched counts: ", mismatched_counts)
 
 
-# Connect to the database
+###############################
+## MAIN
+###############################
+
+# Initialize Hessian client and DB connection
+url = "https://phinvads.cdc.gov/vocabService/v2"
+service = HessianProxy(url)
 conn = psycopg2.connect("dbname=phinvads user=postgres password=cdc host=db")
 cur = conn.cursor()
 
-# load_code_systems()
-# load_code_system_concepts()
-check_code_system_concept_count()
+# Define object schema
+object_schema = {
+    "code_system": {
+        "table_name": "code_system",
+        "service_method": service.getAllCodeSystems,
+        "response_attribute": "codeSystems",
+        "id_key": "oid",
+    },
+    "code_system_concept": {
+        "table_name": "code_system_concept",
+        "service_method": service.getCodeSystemConceptsByCodeSystemOid,
+        "response_attribute": "codeSystemConcepts",
+        "id_key": "codesystemoid",
+    },
+    "value_set": {
+        "table_name": "value_set",
+        "service_method": service.getAllValueSets,
+        "response_attribute": "valueSet",
+        "id_key": "oid",
+    },
+    "value_set_version": {
+        "table_name": "value_set_version",
+        "service_method": service.getAllValueSetVersions,
+        "response_attribute": "valueSetVersions",
+        "id_key": "id",
+    },
+    "value_set_concept": {
+        "table_name": "value_set_concept",
+        "service_method": service.getValueSetConceptsByValueSetVersionId,
+        "response_attribute": "valueSetConcepts",
+        "id_key": "valuesetversionid",
+    },
+}
 
-# Close communication with the database
+# Load code systems and code system concepts
+code_system_oids = load_entities(object_schema["code_system"], cur)
+load_concepts(
+    object_schema["code_system_concept"],
+    code_system_oids,
+    cur,
+)
+check_concept_count(
+    object_schema["code_system_concept"],
+    cur,
+)
+
+# Load value sets, value set versions, and value set concepts
+value_set_oids = load_entities(object_schema["value_set"], cur)
+value_set_version_ids = load_entities(object_schema["value_set_version"], cur)
+load_concepts(
+    object_schema["value_set_concept"],
+    value_set_version_ids,
+    cur,
+)
+check_concept_count(
+    object_schema["value_set_concept"],
+    cur,
+)
+
+# Close DB connection
 conn.commit()
 cur.close()
 conn.close()
